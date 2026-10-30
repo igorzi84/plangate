@@ -25,7 +25,7 @@ from plangate.explanation_providers.deterministic import (
     DeterministicExplanationProvider,
 )
 from plangate.main import create_app
-from plangate.sqlite_review_store import SQLiteReviewStore
+from plangate.stores.sqlite import SQLiteReviewStore
 from plangate.temporal.activities.approval import ApprovalActivities
 from plangate.temporal.workflow_starter import TemporalApprovalWorkflowStarter
 from plangate.temporal.workflows.approval import ApprovalWorkflow

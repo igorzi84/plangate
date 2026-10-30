@@ -3,7 +3,7 @@ import logging
 from temporalio import activity
 
 from plangate.domain.models import ApprovalRecord
-from plangate.review_store import ReviewStore
+from plangate.stores.base import ReviewStore
 
 logger = logging.getLogger(__name__)
 

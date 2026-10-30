@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from plangate.domain.models import ApprovalRecord, Finding, Review, ReviewResult
-from plangate.sqlite_review_store import SQLiteReviewStore
+from plangate.stores.sqlite import SQLiteReviewStore
 
 
 @pytest.fixture

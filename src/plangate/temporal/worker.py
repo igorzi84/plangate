@@ -12,7 +12,7 @@ from temporalio.worker.workflow_sandbox import (
 
 from plangate.config import load_app_settings
 from plangate.logging_config import configure_logging
-from plangate.sqlite_review_store import SQLiteReviewStore
+from plangate.stores.sqlite import SQLiteReviewStore
 from plangate.temporal.activities.approval import ApprovalActivities
 from plangate.temporal.workflows.approval import ApprovalWorkflow
 
