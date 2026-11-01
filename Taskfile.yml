@@ -3,6 +3,21 @@
 version: "3"
 
 tasks:
+  dev:up:
+    desc: Build and start the local Compose stack
+    cmds:
+      - docker compose up --build --wait
+
+  dev:down:
+    desc: Stop the local stack and preserve data
+    cmds:
+      - docker compose down
+
+  dev:teardown:
+    desc: Stop the local stack and delete all its data
+    cmds:
+      - docker compose down --volumes
+
   test:unit:
     desc: Run unit tests
     cmds:

@@ -2,13 +2,18 @@ services:
   api:
     build: .
     environment:
-      - PLANGATE_TEMPORAL_ADDRESS=temporal:7233
+      PLANGATE_TEMPORAL_ADDRESS: temporal:7233
+      PLANGATE_REVIEW_STORE_BACKEND: postgres
+      PLANGATE_POSTGRES_HOST: postgres
+      PLANGATE_POSTGRES_PASSWORD: ${PLANGATE_POSTGRES_PASSWORD:?Set PLANGATE_POSTGRES_PASSWORD}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - plangate-data:/data
     depends_on:
       temporal:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   prometheus:
@@ -55,10 +60,16 @@ services:
       ["uv", "run", "--no-sync", "python", "-m", "plangate.temporal.worker"]
     environment:
       PLANGATE_TEMPORAL_ADDRESS: temporal:7233
+      PLANGATE_REVIEW_STORE_BACKEND: postgres
+      PLANGATE_POSTGRES_HOST: postgres
+      PLANGATE_POSTGRES_PASSWORD: ${PLANGATE_POSTGRES_PASSWORD:?Set PLANGATE_POSTGRES_PASSWORD}
+
     volumes:
       - plangate-data:/data
     depends_on:
       temporal:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
   postgres:
     image: postgres:18
