@@ -25,7 +25,7 @@ from plangate.explanation_providers.deterministic import (
     DeterministicExplanationProvider,
 )
 from plangate.main import create_app
-from plangate.sqlite_review_store import SQLiteReviewStore
+from plangate.stores.sqlite import SQLiteReviewStore
 from plangate.temporal.activities.approval import ApprovalActivities
 from plangate.temporal.workflow_starter import TemporalApprovalWorkflowStarter
 from plangate.temporal.workflows.approval import ApprovalWorkflow
@@ -70,7 +70,7 @@ def test_temporal_approval(
                         PolicyConfig(),
                         DeterministicExplanationProvider(),
                         settings=AppSettings(
-                            db_path=tmp_path / "reviews.db",
+                            sqlite_db_path=tmp_path / "reviews.db",
                             host="127.0.0.1",
                             temporal_address=env.client.service_client.config.target_host,
                             llm_provider="deterministic",
@@ -131,8 +131,8 @@ def test_temporal_approval_retries_after_database_commit(tmp_path, monkeypatch):
         async with await WorkflowEnvironment.start_local(
             data_converter=pydantic_data_converter,
         ) as env:
-            db_path = tmp_path / "reviews.db"
-            store = SQLiteReviewStore(db_path)
+            sqlite_db_path = tmp_path / "reviews.db"
+            store = SQLiteReviewStore(sqlite_db_path)
             record = ApprovalRecord(
                 review_id=uuid4(),
                 status="approved",
@@ -189,7 +189,7 @@ def test_temporal_approval_retries_after_database_commit(tmp_path, monkeypatch):
                     assert result == "approved"
                     assert attempts == [1, 2]
                     assert persisted_records == [record, record]
-                    reopened_store = SQLiteReviewStore(db_path)
+                    reopened_store = SQLiteReviewStore(sqlite_db_path)
                     assert reopened_store.get_record(record.review_id) == record
                     assert (
                         reopened_store.get_review(record.review_id).approval_status

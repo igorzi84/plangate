@@ -22,8 +22,8 @@ from plangate.explanation_providers.deterministic import (
 )
 from plangate.explanation_providers.ollama import OllamaExplanationProvider
 from plangate.main import create_app, create_explanation_provider
-from plangate.review_store import InMemoryReviewStore
-from plangate.sqlite_review_store import SQLiteReviewStore
+from plangate.stores.memory import InMemoryReviewStore
+from plangate.stores.sqlite import SQLiteReviewStore
 from plangate.temporal.activities.approval import ApprovalActivities
 from plangate.temporal.workflows.models import ApprovalWorkflowInput
 
@@ -64,7 +64,7 @@ class BadApprovalWorkflowStarter:
 
 
 TEST_SETTINGS = AppSettings(
-    db_path=Path("unused-test.db"),
+    sqlite_db_path=Path("unused-test.db"),
     host="127.0.0.1",
     temporal_address="temporal.test:7233",
     llm_provider="deterministic",

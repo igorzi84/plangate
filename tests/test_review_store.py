@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 
 from plangate.domain.models import ApprovalRecord, Review, ReviewResult
-from plangate.review_store import InMemoryReviewStore
+from plangate.stores.memory import InMemoryReviewStore
 
 
 @pytest.fixture(scope="function")
