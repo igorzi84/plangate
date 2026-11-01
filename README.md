@@ -1,73 +1,104 @@
 # PlanGate
 
-PlanGate reviews Terraform or OpenTofu plan JSON before deployment. It
-normalizes resource changes, runs deterministic policy checks, and returns a
-review decision with concrete findings.
+PlanGate is a review and human-approval gate for Terraform and OpenTofu changes.
+It reads a plan JSON file, checks for risky infrastructure changes, explains the
+findings, and records a human decision before CI/CD can proceed.
 
-It is a local-first portfolio project. The current implementation provides the
-plan-review domain layer, deterministic explanations, and a FastAPI API for
-storing reviews in SQLite, recording human decisions, and retrieving audit
-records. A Temporal workflow receives human decisions and saves them through
-an activity. Structured JSON logs capture completed reviews and submitted human
-decisions. A Prometheus endpoint exposes review, policy-finding, and approval-submission counters,
-review duration, and explanation latency. Docker Compose runs the API, Temporal
-development server, approval worker, and Prometheus together.
-Composite GitHub Actions submit plan JSON for review and check a stored review's
-deployment eligibility. A manually triggered workflow demonstrates checking
-approval against an existing API.
-A separate integration workflow runs the stack and approval check on pull
-requests and can also be triggered manually.
+For example, a plan that opens a security group to `0.0.0.0/0` is blocked by
+policy—even if a human approves it. A plan that passes policy still waits for
+human approval. PlanGate exposes the result as `can_deploy`, which a GitHub
+Action checks before a deployment step.
 
-## Safety boundary
-
-- PlanGate never runs `terraform apply` or `tofu apply`.
-- Deterministic Python policies produce findings and decide `approve`,
-  `needs_review`, or `block`.
-- `approve` means no enabled deterministic policy found a violation. It is not
-  permission to deploy automatically: a human approval remains required before
-  a normal CI/CD deployment.
-- Future AI functionality will explain structured findings only. It will not
-  make enforcement or deployment decisions.
-
-## Current flow
-
-```text
-Terraform/OpenTofu plan JSON
-            |
-            v
- FastAPI POST /reviews (or submit-plan action)
-            |
-            v
- parse_plan() -> ResourceChange objects
-            |
-            v
- evaluate_review() -> policy findings and decision
-            |
-            v
- SQLite review -> deterministic explanation
-            |
-            v
- Start Temporal approval workflow -> API response
-
- Human decision via POST /reviews/{review_id}/approval
-            |
-            v
- Temporal signal -> worker activity
-            |
-            v
- SQLite approval status and audit record
-            |
-            v
- GET /reviews/{review_id} -> can_deploy
-            |
-            v
- check-approval action -> CI/CD eligibility gate
+```mermaid
+flowchart LR
+    Plan[Terraform / OpenTofu plan JSON] --> Policies[Deterministic policy checks]
+    Policies --> Review[Findings + advisory explanation]
+    Review --> Human[Human decision via Temporal]
+    Human --> Store[Persisted review + audit record]
+    Store --> Gate{CI/CD approval gate}
+    Gate -->|Approved and no policy block| Eligible[Eligible to deploy]
+    Gate -->|Pending, rejected, or blocked| Denied[Deployment denied]
 ```
 
-The approval endpoint returns `202 Accepted` after submitting the signal;
-the worker persists the decision asynchronously. The gate requires a persisted
-human approval and a policy decision other than `block`. The current workflows
-test eligibility without deploying infrastructure.
+Built as a local-first portfolio project with Python, FastAPI, Temporal,
+PostgreSQL, Prometheus, and Docker Compose. SQLite is also supported. Explanations
+are deterministic by default, with an optional local Ollama provider. No paid
+model API or cloud account is required for the demo.
+
+**Safety boundary:** Python policies enforce the rules; AI only explains their
+findings; humans approve deployment. PlanGate never runs `terraform apply` or
+`tofu apply`. The included workflows demonstrate the gate without deploying
+infrastructure. A deployment workflow must explicitly require the gate to pass.
+
+## Quick demo
+
+Requirements: Docker with Compose, [Task](https://taskfile.dev/), `curl`, and `jq`.
+Run these commands from the repository root. The checked-in fixture means you
+can try PlanGate without installing Terraform or creating infrastructure.
+
+### 1. Start the stack
+
+Set a local development password in your shell, then start the services:
+
+```bash
+export PLANGATE_POSTGRES_PASSWORD='plangate-local-demo'
+task dev:up
+```
+
+Compose starts the API, approval worker, Temporal, PostgreSQL, and Prometheus.
+The API and worker both use PostgreSQL. Open the API docs at
+[localhost:8000/docs](http://localhost:8000/docs) or the Temporal UI at
+[localhost:8233](http://localhost:8233).
+
+### 2. Submit a safe plan
+
+```bash
+review_id=$(jq '{plan: .}' tests/fixtures/plans/nginx-create.json |
+  curl --fail-with-body -sS \
+    -H 'Content-Type: application/json' \
+    --data-binary @- http://127.0.0.1:8000/reviews |
+  jq -er '.review_id')
+
+curl --fail-with-body -sS "http://127.0.0.1:8000/reviews/$review_id" | jq
+```
+
+Expected fields: `decision: "approve"`, `approval_status: "pending"`, and
+`can_deploy: false`. Passing policy does not replace human approval.
+
+### 3. Approve and check the gate
+
+```bash
+curl --fail-with-body -sS \
+  -H 'Content-Type: application/json' \
+  --data '{"status":"approved","reviewer":"local-demo","reason":"Reviewed the safe Docker plan."}' \
+  "http://127.0.0.1:8000/reviews/$review_id/approval"
+```
+
+The API returns `202 Accepted`; Temporal persists the decision asynchronously.
+Run the following after a moment, repeating if it still shows `pending`:
+
+```bash
+curl --fail-with-body -sS "http://127.0.0.1:8000/reviews/$review_id" | jq
+curl --fail-with-body -sS "http://127.0.0.1:8000/reviews/$review_id/approval" | jq
+```
+
+The review should now show `approval_status: "approved"` and `can_deploy: true`.
+The second response is the audit record: reviewer, reason, decision, and timestamp.
+Repeat with `tests/fixtures/plans/aws_sg_update.json` to see a policy block:
+human approval will still leave `can_deploy: false`. This fixture is only JSON;
+it does not create AWS resources.
+
+### 4. Stop or start fresh
+
+```bash
+task dev:down       # Stop containers; preserve reviews and service data.
+task dev:up         # Start again with the saved data.
+task dev:teardown   # Stop containers and delete all Compose volumes.
+```
+
+Use the same PostgreSQL password when restarting an existing database volume.
+Keep the password available in your shell for Compose commands, or put it in
+an ignored `.env` file. Never commit real credentials.
 
 ## Policies
 
@@ -88,14 +119,15 @@ rejected during evaluation.
 
 ## Run locally
 
-Requirements: Python 3.14+, [uv](https://docs.astral.sh/uv/), Docker, and
+Requirements: Python 3.14+, [uv](https://docs.astral.sh/uv/),
+[Task](https://taskfile.dev/), Docker, and
 Terraform or OpenTofu for the optional local demo.
 
 Install dependencies and run tests:
 
 ```bash
 uv sync --dev
-uv run pytest
+task test
 ```
 
 For the full local stack, use the Docker Compose instructions below. To run
@@ -133,17 +165,18 @@ The image contains the API and approval worker code. The API requires a
 reachable Temporal server during startup, and a worker must run to persist
 human decisions. Inside a container, the default `localhost:7233` points to
 that container, so running the API image alone does not start the full system.
-Use Docker Compose below to configure service networking and shared SQLite
+Use Docker Compose below to configure service networking and PostgreSQL
 storage. Compose builds the image automatically, so the separate build above
 is optional.
 
 ### Run with Docker Compose
 
-From the repository root, start the API, approval worker, Temporal development
-server, and Prometheus together:
+From the repository root, set `PLANGATE_POSTGRES_PASSWORD` as in the quick demo,
+then start the API, approval worker, Temporal development server, PostgreSQL,
+and Prometheus together:
 
 ```bash
-docker compose up --build
+task dev:up
 ```
 
 Stop any host API, Temporal server, and worker before starting Compose to avoid
@@ -157,7 +190,8 @@ Compose worker. Published ports bind only to localhost:
 - Prometheus UI: `http://127.0.0.1:9090`
 
 The API and worker connect to `temporal:7233` through the Compose network. Both
-wait for Temporal's healthcheck to pass before starting. The Temporal entrypoint
+wait for Temporal and PostgreSQL healthchecks to pass before starting. They
+connect to the database at `postgres:5432`. The Temporal entrypoint
 fixes its data-directory ownership as root, then starts the development server
 as the `temporal` user.
 
@@ -176,13 +210,13 @@ plangate_reviews_total
 The counter for the review's `policy_result` should increase by one. Before the
 first successfully completed review, this query may return no data.
 
-Compose uses three named volumes:
+Compose uses four named volumes:
 
-- `plangate-data` is mounted at `/data` in both the API and worker. They
-  share `/data/plangate.db` for reviews and approval audit records.
-- `temporal-data` is mounted at `/data` in Temporal. Its separate
-  `/data/temporal.db` stores workflow history across container recreation.
-- `prometheus-data` is mounted at `/prometheus` for metric history.
+- `postgres-data` stores reviews and approval audit records in PostgreSQL.
+- `temporal-data` stores Temporal workflow history.
+- `prometheus-data` stores metric history.
+- `plangate-data` is mounted at `/data` in the API and worker for SQLite mode;
+  PostgreSQL mode stores reviews in `postgres-data` instead.
 
 To verify approval processing after a worker restart:
 
@@ -203,11 +237,11 @@ storage blocks. The size threshold is not a strict cap on total disk usage:
 recent data, the write-ahead log, and temporary compaction files can require
 additional space.
 
-Press Ctrl+C to stop the services, or run `docker compose down` to stop and
-remove their containers and network while retaining all three named volumes.
+`task dev:down` stops and removes the containers and network while retaining
+all named volumes. `task dev:teardown` also deletes every named volume.
 
 To verify review persistence, create a review using the API example below and
-save its `review_id`. Run `docker compose down`, then `docker compose up --build`
+save its `review_id`. Run `task dev:down`, then `task dev:up`
 without removing the volumes. Fetch `GET /reviews/{review_id}` to confirm the
 review is still available. Docker manages the volumes; on macOS with Docker
 Desktop, they live inside Docker's Linux VM rather than in the repository.
@@ -228,17 +262,33 @@ rejected.
 
 ### Database configuration
 
-The local API defaults to `plangate.db` in the repository root. Set
-`PLANGATE_DB_PATH` to use a different database file:
+Direct host execution defaults to SQLite; Docker Compose selects PostgreSQL.
+The API and worker use the same store factory and must have matching database
+settings so they can read and update the same reviews.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PLANGATE_REVIEW_STORE_BACKEND` | `sqlite` | `sqlite` or `postgres` |
+| `PLANGATE_SQLITE_DB_PATH` | `plangate.db` in the repository root | SQLite file path |
+| `PLANGATE_POSTGRES_HOST` | `127.0.0.1` | PostgreSQL hostname; Compose uses `postgres` |
+| `PLANGATE_POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `PLANGATE_POSTGRES_DB` | `plangate` | Database name |
+| `PLANGATE_POSTGRES_USER` | `plangate` | Database user |
+| `PLANGATE_POSTGRES_PASSWORD` | Unset | Required when PostgreSQL is selected |
+
+For SQLite on the host:
 
 ```bash
-PLANGATE_DB_PATH=/tmp/plangate.db uv run plangate
+PLANGATE_SQLITE_DB_PATH=/tmp/plangate.db uv run plangate
 ```
 
-The parent directory must already exist and be writable. SQLite creates the
-database file if it does not exist. Relative paths resolve from the directory
-where you start the server. Empty or whitespace-only values are rejected.
-Database files matching `*.db` are ignored by Git.
+The SQLite parent directory must already exist and be writable. Relative paths
+resolve from the working directory. Blank paths are rejected. Database files
+matching `*.db` are ignored by Git.
+
+Settings load an optional `.env` file from the working directory. PostgreSQL
+credentials are passed to both application containers explicitly in Compose;
+configuring the database service alone does not configure its clients.
 
 ### LLM provider configuration
 
@@ -301,7 +351,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/metrics
 | `plangate_policy_findings_total` | Counter | `policy_id`, `severity` | Policy IDs listed above; severity `low`, `medium`, or `high` |
 | `plangate_approval_submissions_total` | Counter | `requested_status` | `approved`, `rejected` |
 | `plangate_review_duration_seconds` | Histogram | `policy_result` | `approve`, `needs_review`, `block` |
-| `plangate_explanation_duration_seconds` | Histogram | `provider_name` | `deterministic` for the current provider |
+| `plangate_explanation_duration_seconds` | Histogram | `provider_name` | `deterministic` or `ollama` |
 
 The review counter increments after storage, explanation, and workflow startup
 succeed. The approval-submission counter increments after Temporal accepts the
@@ -330,20 +380,20 @@ with durations measured in seconds. Provider labels use the provider's explicit,
 stable `name`.
 
 Each app instance owns its metrics registry. Metrics are held in memory and
-reset when the app process restarts; they do not count historical SQLite
+reset when the app process restarts; they do not count historical database
 records. A label combination appears after its first recorded event. Review
 IDs and plan hashes stay in logs rather than metric labels.
 
 ## API
 
-The local API stores reviews and approval records in SQLite. They survive
-server restarts when the API uses the same database file. Recording a human
-decision updates the review and inserts its audit record in one transaction;
-if either write fails, both are rolled back.
+The API stores reviews and approval records in the configured PostgreSQL or
+SQLite database. They survive application restarts when the database is
+preserved. Recording a human decision updates the review and inserts its audit
+record in one transaction; if either write fails, both are rolled back.
 
 The `create_app()` factory retains an in-memory default for isolated tests;
-the local entrypoint explicitly supplies the configured SQLite store.
-The current explanation provider is deterministic; no model API is required.
+the application entrypoint supplies the store selected by configuration.
+Explanations are deterministic by default; no model API is required.
 
 Run this example from the repository root with the API running. It uses Python
 to wrap the checked-in local Docker fixture in the request body.
@@ -407,8 +457,8 @@ The Temporal server must be available when the API starts. The worker must be
 running to execute approval activities. Docker Compose starts both services;
 for direct host execution, use the separate-terminal instructions under
 "Run locally". Configure the API and worker with the same
-`PLANGATE_TEMPORAL_ADDRESS` (default `localhost:7233`) and SQLite database
-file via `PLANGATE_DB_PATH`.
+`PLANGATE_TEMPORAL_ADDRESS` (default `localhost:7233`) and database settings.
+For SQLite, both processes must use the same `PLANGATE_SQLITE_DB_PATH`.
 
 ### Retrieve the audit record
 
@@ -516,20 +566,21 @@ API address reachable from the chosen runner. An API on a private network
 requires a runner with access to that network. The action does not establish
 network connectivity or configure API authentication.
 
-### Plan review integration tests
+### Plan review end-to-end tests
 
-The [integration workflow](.github/workflows/test-approval-action.yml), displayed
-as **Plan review integration**, runs on pull requests and through
-`workflow_dispatch`. Its `plan-review-integration` job uses a two-case matrix:
+The [E2E workflow](.github/workflows/test-approval-action.yml), displayed
+as **Plan review E2E**, runs on pull requests and through
+`workflow_dispatch`. Its `plan-review-integration` job uses a three-case matrix:
 
 | Case | Plan fixture | Expected gate outcome after simulated approval |
 | --- | --- | --- |
-| `safe` | `nginx-create.json` | Success: deployment is eligible |
-| `blocked` | `aws_sg_update.json` | Failure: the deterministic policy block still prevents deployment |
+| `safe-approved` | `nginx-create.json` | Success: deployment is eligible |
+| `blocked-approved` | `aws_sg_update.json` | Failure: the policy block prevents deployment |
+| `safe-rejected` | `nginx-create.json` | Failure: human rejection prevents deployment |
 
 Each matrix case runs on a separate GitHub-hosted runner with its own Compose
 stack, database, and volumes. The jobs can run in parallel subject to available
-runner concurrency; `fail-fast: false` lets either case finish if the other fails.
+runner concurrency; `fail-fast: false` lets all cases finish if another fails.
 Each case:
 
 1. Starts the Docker Compose stack on the GitHub-hosted runner.
@@ -537,8 +588,8 @@ Each case:
 3. Calls `submit-plan` with its fixture and captures the returned review ID.
 4. Calls the composite action while approval is pending and asserts that the
    action fails. An unexpected success fails the integration job.
-5. Submits a simulated approval identified as an integration test.
-6. Polls until the worker has persisted the approval.
+5. Submits the simulated human decision configured for the case.
+6. Polls until the worker has persisted the decision.
 7. Calls `check-approval` again and compares its step outcome with the matrix's
    expected outcome. An expected policy denial passes the test; an unexpected
    gate result fails the job.
@@ -549,17 +600,14 @@ Simulated approval belongs only to this test; normal
 deployment reviews still require a human decision. The separate demo workflow
 above checks an existing instance and review supplied by the caller.
 
-To run the integration tests manually, open **Actions → Plan review integration →
+To run the E2E tests manually, open **Actions → Plan review E2E →
 Run workflow** and choose the branch to test. No API URL or review ID inputs
 are needed.
 
-For `main` protection, configure the repository ruleset to require `test`
-from the [tests workflow](.github/workflows/tests.yml) and both matrix checks
-from `plan-review-integration`. After the workflow runs, select the safe and
-blocked checks using their displayed names in the ruleset. Replace the old
-`approval-integration` requirement if present. Running workflows on pull
-requests does not by itself make their checks mandatory; keep the job ID and
-matrix values stable after configuring the required checks.
+For `main` protection, require both matrix checks from the
+[tests workflow](.github/workflows/tests.yml) (`unit` and `integration`) and all
+three **Plan review** E2E checks. Select their actual displayed names after the
+workflows run. Pull-request triggers alone do not make checks mandatory.
 
 ## Local Terraform demo
 
@@ -582,11 +630,24 @@ terraform destroy
 
 ## Tests and fixtures
 
+| Suite | Command | Scope |
+| --- | --- | --- |
+| Unit | `task test:unit` | Tests outside `tests/integration` |
+| Integration | `task test:integration` | Tests with real dependencies, including PostgreSQL and Temporal |
+| All local tests | `task test` | Unit followed by integration tests |
+| E2E | **Plan review E2E** GitHub workflow | Compose stack, plan submission, human decision, and CI gate |
+
+Integration tests require Docker and `PLANGATE_POSTGRES_PASSWORD` in the shell
+or an ignored `.env` file. The PostgreSQL fixture creates and drops a dedicated
+`plangate_test` database. CI runs unit and integration tests in separate matrix
+jobs and supplies a disposable database password.
+
+
 Checked-in fixtures under `tests/fixtures/plans/` are fictional and safe to
 commit. They cover both a local Docker plan and a risky public AWS security
 group update. The tests cover parsing, individual policy checks, configuration
 loading, decision rules, the domain pipeline, store isolation, SQLite
-persistence and transaction rollback, the review and human-decision API routes,
+and PostgreSQL persistence and transaction rollback, the review and human-decision API routes,
 JSON log formatting with and without review context, isolated metrics registries,
 counter updates, policy-finding counts and failed-explanation exclusions,
 duration histogram counts and sums, failure exclusions, and
@@ -595,13 +656,12 @@ the Prometheus endpoint.
 Before committing changes:
 
 ```bash
-uv run pytest
+task test
 git diff --check
 ```
 
 ## Planned work
 
-- Optional model-backed advisory explanations grounded in policy findings.
 - Demonstrate the approval action before a deployment step in CI/CD.
 - A bounded AWS demonstration with MFA, budget alerts, required tags, and a
   verified destroy path.
