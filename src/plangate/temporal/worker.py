@@ -12,7 +12,7 @@ from temporalio.worker.workflow_sandbox import (
 
 from plangate.config import load_app_settings
 from plangate.logging_config import configure_logging
-from plangate.stores.sqlite import SQLiteReviewStore
+from plangate.stores.factory import create_review_store
 from plangate.temporal.activities.approval import ApprovalActivities
 from plangate.temporal.workflows.approval import ApprovalWorkflow
 
@@ -27,7 +27,7 @@ async def main():
         settings.temporal_address, data_converter=pydantic_data_converter
     )
 
-    review_store = SQLiteReviewStore(settings.db_path)
+    review_store = create_review_store(settings)
     approval_activities = ApprovalActivities(review_store)
 
     with ThreadPoolExecutor(max_workers=4) as executor:

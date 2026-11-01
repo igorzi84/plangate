@@ -34,8 +34,8 @@ from plangate.explanation_providers.ollama import OllamaExplanationProvider
 from plangate.logging_config import configure_logging
 from plangate.metrics import ReviewMetrics
 from plangate.stores.base import ReviewStore
+from plangate.stores.factory import create_review_store
 from plangate.stores.memory import InMemoryReviewStore
-from plangate.stores.sqlite import SQLiteReviewStore
 from plangate.temporal.workflow_starter import (
     ApprovalWorkflowStarter,
     TemporalApprovalWorkflowStarter,
@@ -279,7 +279,7 @@ def main() -> None:
     configure_logging()
     policy_config = load_policy_config(POLICY_CONFIG_PATH)
     settings = load_app_settings()
-    review_store = SQLiteReviewStore(settings.db_path)
+    review_store = create_review_store(settings)
 
     app = create_app(
         policy_config,

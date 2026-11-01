@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from plangate.config import AppSettings, load_app_settings
 
 ROOT_DIR = Path(__file__).parent.parent
-DB_PATH = ROOT_DIR / "plangate.db"
+SQLITE_DB_PATH = ROOT_DIR / "plangate.db"
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,7 @@ def disable_dotenv(monkeypatch):
 
 
 def test_env_config(monkeypatch):
-    monkeypatch.setenv("PLANGATE_DB_PATH", "mydb.db")
+    monkeypatch.setenv("PLANGATE_SQLITE_DB_PATH", "mydb.db")
     monkeypatch.setenv("PLANGATE_TEMPORAL_ADDRESS", " temporal.test:7233 ")
     monkeypatch.setenv("PLANGATE_LLM_PROVIDER", "test-provider")
     monkeypatch.setenv("PLANGATE_LLM_MODEL", "test-model")
@@ -31,7 +31,7 @@ def test_env_config(monkeypatch):
 
     settings = load_app_settings()
 
-    assert settings.db_path == Path("mydb.db")
+    assert settings.sqlite_db_path == Path("mydb.db")
     assert settings.temporal_address == "temporal.test:7233"
     assert settings.llm_provider == "test-provider"
     assert settings.llm_model == "test-model"
@@ -45,16 +45,16 @@ def test_env_config(monkeypatch):
     assert settings.postgres_password.get_secret_value() == "test-password"
 
 
-def test_db_path_variable_unset(monkeypatch):
-    monkeypatch.delenv("PLANGATE_DB_PATH", raising=False)
+def test_sqlite_db_path_variable_unset(monkeypatch):
+    monkeypatch.delenv("PLANGATE_SQLITE_DB_PATH", raising=False)
 
     settings = load_app_settings()
-    assert settings.db_path == DB_PATH
+    assert settings.sqlite_db_path == SQLITE_DB_PATH
 
 
 @pytest.mark.parametrize("path", ["", " "])
-def test_empty_db_path_variable(monkeypatch, path):
-    monkeypatch.setenv("PLANGATE_DB_PATH", path)
+def test_empty_sqlite_db_path_variable(monkeypatch, path):
+    monkeypatch.setenv("PLANGATE_SQLITE_DB_PATH", path)
 
     with pytest.raises(ValueError):
         load_app_settings()

@@ -3,23 +3,32 @@ name: Tests
 on: [pull_request]
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
-            - name: Install python
-              uses: actions/setup-python@v7
-              with:
-                  python-version-file: ".python-version"
+      - name: Install python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: ".python-version"
 
-            - name: Install uv
-              uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
-              with:
-                  version: "0.13.1"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.13.1"
 
-            - name: Sync uv
-              run: uv sync --locked --dev
+      - name: Sync uv
+        run: uv sync --locked --dev
 
-            - name: Run tests
-              run: uv run pytest
+      - name: Install Task
+        uses: go-task/setup-task@v2
+
+      - name: Run tests
+        env:
+          PLANGATE_POSTGRES_PASSWORD: ${{ matrix.suite == 'integration' && 'plangate-ci-only' || '' }}
+        run: task test:${{ matrix.suite }}

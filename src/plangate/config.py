@@ -18,7 +18,7 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-    db_path: Path = Field(default=ROOT_DIR / "plangate.db")
+    sqlite_db_path: Path = Field(default=ROOT_DIR / "plangate.db")
     host: str = Field(default="127.0.0.1", min_length=1)
     temporal_address: str = Field(default="localhost:7233", min_length=1)
 
@@ -36,13 +36,13 @@ class AppSettings(BaseSettings):
 
     review_store_backend: Literal["sqlite", "postgres"] = "sqlite"
 
-    @field_validator("db_path", mode="before")
+    @field_validator("sqlite_db_path", mode="before")
     @classmethod
     def validate_path(cls, value: Any) -> Any:
         if isinstance(value, str):
             value = value.strip()
             if not value:
-                raise ValueError("PLANGATE_DB_PATH must not be blank")
+                raise ValueError("PLANGATE_SQLITE_DB_PATH must not be blank")
         return value
 
     @field_validator("temporal_address", mode="before")
