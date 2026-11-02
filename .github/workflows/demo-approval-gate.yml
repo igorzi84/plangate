@@ -1,25 +1,30 @@
 name: Demo approval gate
 
 on:
-    workflow_dispatch:
-        inputs:
-            api_url:
-                description: "API URL"
-                required: true
-                type: string
-            review_id:
-                description: "Review ID"
-                required: true
-                type: string
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API URL"
+        required: true
+        type: string
+      review_id:
+        description: "Review ID"
+        required: true
+        type: string
 
 jobs:
-    demo-approval-gate:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
+  demo-approval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
-            - name: Can deploy
-              uses: ./.github/actions/check-approval
-              with:
-                  api_url: ${{ inputs.api_url }}
-                  review_id: ${{ inputs.review_id }}
+      - name: Can deploy
+        id: check_approval
+        uses: ./.github/actions/check-approval
+        with:
+          api_url: ${{ inputs.api_url }}
+          review_id: ${{ inputs.review_id }}
+
+      - name: Simulate deployment
+        if: steps.check_approval.outputs.can_deploy == 'true'
+        run: echo "Deployment would run here."
