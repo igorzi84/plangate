@@ -10,12 +10,29 @@ inputs:
     description: "Review ID"
     required: true
 
+outputs:
+  can_deploy:
+    description: Review deployment decision
+    value: ${{ steps.check_approval.outputs.can_deploy }}
+
 runs:
   using: composite
   steps:
-  - name: Can deploy
-    env:
+    - name: Can deploy
+      id: check_approval
+      env:
         API_URL: ${{ inputs.api_url }}
         REVIEW_ID: ${{ inputs.review_id }}
-    shell: bash
-    run: curl --fail "$API_URL/reviews/$REVIEW_ID" | jq -e '.can_deploy == true'
+      shell: bash
+      run: |
+        response=$(curl --fail --silent --show-error "$API_URL/reviews/$REVIEW_ID")
+
+        can_deploy=$(printf '%s' "$response" |
+          jq -er 'if .can_deploy == true then "true"
+                  elif .can_deploy == false then "false"
+                  else error("can_deploy must be a boolean")
+                  end')
+
+        echo "can_deploy=$can_deploy" >> "$GITHUB_OUTPUT"
+
+        test "$can_deploy" = "true"
