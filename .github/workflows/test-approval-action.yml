@@ -32,7 +32,7 @@ jobs:
 
       - name: Start docker compose
         env:
-          PLANGATE_POSTGRES_PASSWORD: 'plangate-ci-only'
+          PLANGATE_POSTGRES_PASSWORD: "plangate-ci-only"
         run: docker compose up --build --wait
 
       - name: Wait for API
@@ -111,4 +111,8 @@ jobs:
         env:
           ACTUAL: ${{ steps.final_check.outcome }}
           EXPECTED: ${{ matrix.expected_outcome }}
-        run: test "$ACTUAL" = "$EXPECTED"
+          CAN_DEPLOY: ${{ steps.final_check.outputs.can_deploy }}
+          EXPECTED_CAN_DEPLOY: ${{ matrix.expected_outcome == 'success' }}
+        run: |
+          test "$ACTUAL" = "$EXPECTED"
+          test "$CAN_DEPLOY" = "$EXPECTED_CAN_DEPLOY"
